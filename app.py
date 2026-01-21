@@ -3,73 +3,71 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import date
 
-st.set_page_config(page_title="Finanças Pro - Integrado", layout="wide")
+st.set_page_config(page_title="Finanças Pro", layout="wide")
 
-# Conexão com o Google Sheets
+# Conexão com Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def carregar_dados():
     try:
-        # Tenta ler a aba principal (Sheet1 ou Página1)
-        return conn.read(ttl="0s")
+        df = conn.read(ttl="0s")
+        # Se a planilha estiver vazia ou sem as colunas certas, cria um padrão
+        if df.empty or "Valor" not in df.columns:
+            return pd.DataFrame(columns=["Conta", "Valor", "Categoria", "Data"])
+        return df
     except:
-        # Se estiver vazia, retorna um DataFrame com a estrutura correta
         return pd.DataFrame(columns=["Conta", "Valor", "Categoria", "Data"])
 
-st.title("🛡️ Finanças Pro: Sincronizado com Google Sheets")
+st.title("🛡️ Finanças Pro: Sincronizado")
 
-aba1, aba2, aba3 = st.tabs(["📊 Análise de Gastos", "📅 Agendamentos", "➕ Novo Lançamento"])
+# Renda Mensal na lateral
+renda_mensal = st.sidebar.number_input("Sua Renda Mensal (R$)", min_value=0.0, value=3000.0)
+
+aba1, aba2, aba3 = st.tabs(["📊 Análise", "📅 Agendamentos", "➕ Novo Gasto"])
 
 with aba3:
-    st.subheader("Registrar no Google Sheets")
-    with st.form("form_registro"):
-        conta = st.text_input("Nome da Despesa")
-        valor = st.number_input("Valor (R$)", min_value=0.0, step=0.01)
-        cat = st.selectbox("Categoria", ["Essencial", "Lazer", "Dívida", "Educação", "Reserva"])
-        dt = st.date_input("Data de Vencimento", value=date.today())
-        
-        submit = st.form_submit_button("Salvar na Nuvem")
+    st.subheader("Registrar Novo Gasto")
+    with st.form("meu_form"):
+        nome = st.text_input("Nome da Conta")
+        valor = st.number_input("Valor (R$)", min_value=0.0)
+        cat = st.selectbox("Categoria", ["Essencial", "Lazer", "Dívida", "Reserva"])
+        dt = st.date_input("Data")
+        submit = st.form_submit_button("Salvar na Planilha")
 
-        if submit:
+        if submit and nome:
             df_atual = carregar_dados()
-            # Criar nova linha
-            novo_dado = pd.DataFrame([{
-                "Conta": conta, 
-                "Valor": valor, 
-                "Categoria": cat, 
-                "Data": dt.strftime('%Y-%m-%d')
-            }])
-            # Concatenar e salvar
-            df_final = pd.concat([df_atual, novo_dado], ignore_index=True)
+            novo_item = pd.DataFrame([{"Conta": nome, "Valor": valor, "Categoria": cat, "Data": str(dt)}])
+            df_final = pd.concat([df_atual, novo_item], ignore_index=True)
             conn.update(data=df_final)
-            st.success("✅ Gravado com sucesso na planilha!")
+            st.success("✅ Salvo com sucesso! Vá na aba Análise.")
 
 with aba1:
     df = carregar_dados()
     if not df.empty:
-        col1, col2 = st.columns([1, 2])
+        # Garante que 'Valor' é número para não dar erro no cálculo
+        df["Valor"] = pd.to_numeric(df["Valor"], errors='coerce').fillna(0)
         
-        with col1:
-            st.metric("Total Acumulado", f"R$ {df['Valor'].astype(float).sum():.2f}")
-            st.write("### Histórico")
-            st.dataframe(df, use_container_width=True)
-            
-        with col2:
-            st.write("### Divisão por Categoria")
-            chart_data = df.groupby('Categoria')['Valor'].sum()
-            st.bar_chart(chart_data)
+        total = df["Valor"].sum()
+        sobra = renda_mensal - total
+        
+        c1, c2 = st.columns(2)
+        c1.metric("Total de Gastos", f"R$ {total:.2f}")
+        c2.metric("Sobra no Mês", f"R$ {sobra:.2f}", delta_color="normal")
+        
+        st.write("### Seus Lançamentos")
+        st.dataframe(df, use_container_width=True)
+        
+        st.write("### Gastos por Categoria")
+        st.bar_chart(df.groupby("Categoria")["Valor"].sum())
     else:
-        st.info("Nenhum dado encontrado. Faça o primeiro lançamento na aba ao lado.")
+        st.info("Sua planilha está pronta! Use a aba 'Novo Lançamento' para começar.")
 
 with aba2:
     st.subheader("Próximos Pagamentos")
-    df = carregar_dados()
     if not df.empty:
-        # Filtra datas futuras
-        hoje = date.today().strftime('%Y-%m-%d')
-        pendentes = df[df['Data'] >= hoje]
-        if not pendentes.empty:
-            for _, row in pendentes.iterrows():
-                st.info(f"📅 **{row['Data']}**: {row['Conta']} - R$ {row['Valor']}")
+        hoje = str(date.today())
+        futuros = df[df["Data"] >= hoje]
+        if not futuros.empty:
+            st.table(futuros)
         else:
-            st.write("Não há pagamentos futuros agendados.")
+            st.write("Nenhum pagamento futuro encontrado.")
